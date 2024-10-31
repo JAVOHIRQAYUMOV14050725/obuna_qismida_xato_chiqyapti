@@ -27,6 +27,7 @@ export class AuthGuard implements CanActivate {
                 throw new UnauthorizedException('User not found or deleted');
             }
 
+            // `request.user` ni belgilash
             request.user = user;
             return true;
         } catch (error) {
@@ -36,5 +37,7 @@ export class AuthGuard implements CanActivate {
             throw new UnauthorizedException('Invalid token');
         }
     }
+
+
     
 }

@@ -1,4 +1,4 @@
-import { Injectable, ConflictException, NotFoundException, ForbiddenException } from '@nestjs/common';
+import { Injectable, ConflictException, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Enrollment } from './entities/enrollment.entity';
@@ -18,22 +18,14 @@ export class EnrollmentService {
     private readonly userRepository: Repository<User>,
   ) { }
 
-  async create(createEnrollmentDto: CreateEnrollmentDto, req: any): Promise<any> {
-    const userId = req.user.id;
-    const { courseId } = createEnrollmentDto;
+  async create(createEnrollmentDto: CreateEnrollmentDto, userId: string): Promise<any> {
+    if (!userId) {
+      throw new UnauthorizedException('User must be authenticated');
+    }
 
+    const { courseId } = createEnrollmentDto;
     if (!courseId) {
       throw new NotFoundException('Course ID must be provided.');
-    }
-
-    const user = await this.userRepository.findOne({ where: { id: userId } });
-    if (!user) {
-      throw new NotFoundException('User not found');
-    }
-
-    const rolesAllowed = [User_Role.Student, User_Role.Teacher, User_Role.Admin];
-    if (!rolesAllowed.includes(user.role)) {
-      throw new ForbiddenException('You must be a student, teacher, or admin to enroll in a course');
     }
 
     const course = await this.courseRepository.findOne({ where: { id: courseId } });
@@ -44,81 +36,78 @@ export class EnrollmentService {
       }
       return {
         message: 'Course not found. Here are the available courses:',
-        courses: allCourses.map(c => ({ id: c.id, name: c.name })),
+        courses: allCourses.map((c) => ({ id: c.id, name: c.name })),
       };
     }
 
     const isAlreadyEnrolled = await this.enrollmentRepository.findOne({
-      where: { student: { id: userId }, course: { id: courseId } },
+      where: {
+        student: { id: Number(userId) },
+        course: { id: courseId } 
+      },
     });
+
     if (isAlreadyEnrolled) {
-      return { message: 'You are already enrolled in this course', data: isAlreadyEnrolled };
+      return {
+        message: 'You are already enrolled in this course',
+        data: isAlreadyEnrolled,
+      };
     }
 
     const enrollment = this.enrollmentRepository.create({
-      student: user,
+      student: { id: Number(userId) }, 
       course,
       enrolledAt: new Date(),
+      userId: Number(userId), 
     });
 
-    try {
-      const savedEnrollment = await this.enrollmentRepository.save(enrollment);
-      return {
-        message: 'Enrollment successfully created',
-        data: {
-          id: savedEnrollment.id,
-          course: savedEnrollment.course,
-          enrolledAt: savedEnrollment.enrolledAt,
-        },
-      };
-    } catch (error) {
-      console.error('Error saving enrollment:', error); // Xatoni konsolga chiqarish
-      throw new ConflictException('Failed to create enrollment, please try again');
-    }
+
+    const savedEnrollment = await this.enrollmentRepository.save(enrollment);
+    return {
+      message: 'Enrollment successfully created',
+      data: {
+        id: savedEnrollment.id,
+        course: savedEnrollment.course,
+        enrolledAt: savedEnrollment.enrolledAt,
+      },
+    };
   }
 
 
   async findAll(req: any): Promise<any> {
-    const userId = req.user.id;
-    const user = await this.userRepository.findOne(userId);
+    const userId = parseInt(req.user.id);
+    const userRole = req.user.role; // User roli
 
-    if (user.role === User_Role.Admin || user.role === User_Role.Teacher) {
-      const enrollments = await this.enrollmentRepository.find({ relations: ['student', 'course'] });
-      return enrollments.map(enrollment => {
-        const { password, refreshToken, ...studentWithoutSensitiveData } = enrollment.student;
-        return {
-          ...enrollment,
-          student: studentWithoutSensitiveData,
-        };
-      });
+    let enrollments;
+
+    if (userRole === User_Role.Admin || userRole === User_Role.Teacher) {
+      enrollments = await this.enrollmentRepository.find({ relations: ['course'] });
+    } else {
+      enrollments = await this.enrollmentRepository.find({ where: { student: { id: userId } }, relations: ['course'] });
     }
 
-    const enrollments = await this.enrollmentRepository.find({
-      where: { student: { id: userId } },
-      relations: ['course'],
-    });
-    return enrollments.map(enrollment => ({
-      ...enrollment,
-      student: { id: userId },
-    }));
+    return enrollments;
   }
 
+
   async remove(courseId: number, req: any): Promise<any> {
-    const userId = req.user.id;
+    const userId = parseInt(req.user.id);
     const enrollments = await this.enrollmentRepository.find({
       where: { student: { id: userId } },
       relations: ['course'],
     });
 
-    if (enrollments.length === 0) {
-      throw new NotFoundException('You are not enrolled in any courses.');
-    }
-
     const enrollment = enrollments.find(enrollment => enrollment.course.id === courseId);
+
     if (!enrollment) {
+      const courseList = enrollments.map(enrollment => ({
+        id: enrollment.course.id,
+        name: enrollment.course.name,
+      }));
+
       return {
-        message: 'Enrollment not found for the provided course ID. Here are your enrolled courses:',
-        courses: enrollments.map(e => ({ id: e.course.id, name: e.course.name })),
+        message: 'You are not enrolled in the provided course ID.',
+        yourEnrollments: courseList,
       };
     }
 
@@ -131,4 +120,5 @@ export class EnrollmentService {
       },
     };
   }
+
 }

@@ -70,7 +70,6 @@ import { Injectable, UnauthorizedException, ConflictException, ForbiddenExceptio
 
     user.refreshToken = refreshToken;
     await this.userRepository.save(user);
-    console.log(user);
     
 
     return { accessToken, refreshToken };
